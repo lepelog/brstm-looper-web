@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Music Looper Web</title>
+        <script>
+            const context = new AudioContext({
+                sampleRate: undefined,
+
+            });
+            /**
+             * @typedef Loop
+             * @prop {number} start
+             * @prop {number} end
+             * @prop {number} noteDistance
+             * @prop {number} loudnessDifference
+             * @prop {number} score
+             */
+            /**
+             * @typedef AnalyzeResult
+             * @prop {Loop[]} loops
+             * @prop {number} id
+             */
+            /**
+             * @param {ArrayBuffer} buf
+             * @returns {AnalyzeResult}
+             * 
+             */
+            async function loadLoops(buf) {
+                console.log(buf.byteLength);
+                return await fetch('http://localhost:3000/analyze-loops', {
+                    method: "POST",
+                    body: buf,
+                }).then(d => d.json());
+            }
+
+            function formatTime(s) {
+                return `${Math.floor(s / 60).toFixed(0).padStart(2, '0')}:${Math.floor(s % 60).toFixed(0).padStart(2, '0')}`;
+            }
+
+            function formatPercent(p) {
+                return (p * 100).toFixed(2)
+            }
+
+
+            /**
+             * @param {string} filename
+             * @return {string}
+             */
+            function filenameToBrstm(filename) {
+                let noExtension = /([^\/\\]+)[.][^.]*$/.exec(filename)?.[1] ?? 'out';
+                return noExtension + '.brstm';
+            }
+
+            /**
+             * @param {Loop} loop
+             * @param {string} filename
+             * @return {HTMLTableRowElement}
+             */
+            function mapLoop(loop, filename) {
+                const tr = document.createElement("tr");
+                tr.classList.add("loop-row");
+                function addTd(v) {
+                    const td = document.createElement("td");
+                    td.textContent = v
+                    tr.appendChild(td)
+                    return tr
+                }
+                addTd(formatTime(loop.start));
+                addTd(formatTime(loop.end));
+                addTd(formatPercent(loop.noteDistance));
+                addTd(formatPercent(loop.loudnessDifference));
+                addTd(formatPercent(loop.score));
+
+                const td = document.createElement("td");
+                const startS = loop.start;
+                const endS = loop.end;
+                const s2 = document.createElement("button");
+                s2.textContent = "2s"
+                s2.onclick = playFunction(tr, startS, endS, Math.max(endS - 2, 0), 4);
+                td.appendChild(s2);
+                const s7 = document.createElement("button");
+                s7.textContent = "7s"
+                s7.onclick = playFunction(tr, startS, endS, Math.max(endS - 7, 0), 14);
+                td.appendChild(s7);
+                const full = document.createElement("button");
+                full.textContent = "full"
+                full.onclick = playFunction(tr, startS, endS, 0, undefined);
+                td.appendChild(full);
+                tr.appendChild(td);
+                const dlAsBrstm = document.createElement("a");
+                dlAsBrstm.href = "/encode-brstm/" + window.currentResultId + "/" + filename +
+                    "?loopPoint=" + Math.round(startS * context.sampleRate) + "&end=" + Math.round(endS * context.sampleRate);
+                dlAsBrstm.target = "_blank";
+                dlAsBrstm.textContent = "Download"
+                const dlTd = document.createElement("td");
+                dlTd.appendChild(dlAsBrstm);
+                tr.appendChild(dlTd);
+
+                return tr
+            }
+
+            function playFunction(tr, loopStart, loopEnd, offset, duration) {
+                return function () {
+                    const rows = document.getElementsByClassName("loop-row");
+                    for (var i = 0; i < rows.length; i++) {
+                        rows.item(i).classList.remove("active");
+                    }
+                    tr.classList.add("active");
+                    if (window.audioBufferSource) {
+                        window.audioBufferSource.stop();
+                        window.audioBufferSource.disconnect();
+                    }
+                    window.audioBufferSource = new AudioBufferSourceNode(context, {
+                        buffer: window.audioBuffer,
+                        loop: true,
+                        loopStart,
+                        loopEnd,
+                    });
+                    window.audioBufferSource.connect(context.destination);
+                    window.audioBufferSource.start(0, offset, duration);
+                }
+            }
+
+            async function onFileSelected() {
+                const state = document.getElementById("state");
+                state.textContent = "loading";
+                try {
+                    const files = this.files;
+                    if (files.length == 1) {
+                        const arrayBuf = await files[0].arrayBuffer();
+                        const filename = files[0].name;
+                        // for some reason doing both in parallel doesn't work
+                        // const [audioBuf, analyzeResult] = await Promise.all([context.decodeAudioData(arrayBuf.slice()), loadLoops(arrayBuf.slice())]);
+                        const audioBuf = await context.decodeAudioData(arrayBuf.slice());
+                        const analyzeResult = await loadLoops(arrayBuf.slice());
+                        window.currentResultId = analyzeResult.id;
+                        window.audioBuffer = audioBuf;
+                        state.textContent = "";
+                        const table = document.getElementById("loopbody");
+                        const brstmFilename = filenameToBrstm(filename);
+                        for(const loop of analyzeResult.loops) {
+                            table.appendChild(mapLoop(loop, brstmFilename));
+                        }
+                        document.getElementById("looptable").classList.remove("hidden");
+                    }
+                } catch (e) {
+                    console.error(e);
+                    state.textContent = "Error: " + e
+                }
+            }
+            document.addEventListener("DOMContentLoaded", () => {
+                document.getElementById("fileinput").onchange = onFileSelected;
+            });
+        </script>
+        <style>
+            #looptable {
+                border: 1px solid;
+                border-collapse: collapse;
+            }
+
+            #looptable td {
+                border: 1px solid;
+            }
+
+            #looptable tr.active {
+                background: lightgray;
+            }
+
+            .hidden {
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Music Looper Web</h1>
+        <div>Select a file: <input id="fileinput" type="file" accept="audio/*" /></div>
+        <span id="state"></span>
+        <table class="hidden" id="looptable">
+            <thead>
+                <th>
+                    Loop Start
+                </th>
+                <th>
+                    Loop End
+                </th>
+                <th>
+                    Note Distance
+                </th>
+                <th>
+                    Loudness Difference
+                </th>
+                <th>
+                    Score
+                </th>
+                <th>
+                    Preview
+                </th>
+                <th>
+                    Brstm
+                </th>
+            </thead>
+            <tbody id="loopbody">
+            </tbody>
+        </table>
+    </body>
+</html>
