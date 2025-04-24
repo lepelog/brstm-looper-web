@@ -440,7 +440,8 @@ async fn analyze_loops(
     })?;
 
     if !output.status.success() {
-        error!("pymusiclooper error: {}", out);
+        let stderr = String::from_utf8(output.stderr).unwrap_or_default();
+        error!("pymusiclooper error: {out} {stderr}");
         // should be more specific for garbage user data
         return Err(UploadError::Internal);
     }
