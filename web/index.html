@@ -27,7 +27,7 @@
              */
             async function loadLoops(buf) {
                 console.log(buf.byteLength);
-                return await fetch('http://localhost:3000/analyze-loops', {
+                return await fetch('/analyze-loops', {
                     method: "POST",
                     body: buf,
                 }).then(d => d.json());
